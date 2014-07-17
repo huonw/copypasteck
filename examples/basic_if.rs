@@ -4,7 +4,7 @@
 
 fn main() {
     let a = 16i;
-    let b = if a > 15 {
+    let _b = if a > 15 {
         2u
     } else if a > 10 {
         3
