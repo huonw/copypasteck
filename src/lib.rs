@@ -163,13 +163,13 @@ trait SourceObject {
 }
 
 impl SourceObject for Gc<ast::Block> {
-    fn ast_hash(&self) -> u64 { hasher::hash_block(*self) }
-    fn string(&self) -> String { pprust::block_to_string(*self) }
+    fn ast_hash(&self) -> u64 { hasher::hash_block(&**self) }
+    fn string(&self) -> String { pprust::block_to_string(&**self) }
     fn span(&self) -> Span { self.span }
 }
 impl SourceObject for Gc<ast::Expr> {
-    fn ast_hash(&self) -> u64 { hasher::hash_expr(*self) }
-    fn string(&self) -> String { pprust::expr_to_string(*self) }
+    fn ast_hash(&self) -> u64 { hasher::hash_expr(&**self) }
+    fn string(&self) -> String { pprust::expr_to_string(&**self) }
     fn span(&self) -> Span { self.span }
 }
 
@@ -184,10 +184,10 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
         {
             let mut visit = hasher::make(&mut state);
             for p in self.ref0().iter() {
-                visit::walk_pat(&mut visit, *p, ())
+                visit::walk_pat(&mut visit, &**p, ())
             }
             match *self.ref1() {
-                Some(e) => visit::walk_expr(&mut visit, e, ()),
+                Some(e) => visit::walk_expr(&mut visit, &*e, ()),
                 None => {}
             }
         }
@@ -228,7 +228,7 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
         // Put all the patterns together with a `|`...
         let mut s = self.ref0()
             .iter()
-            .map(|p| pprust::pat_to_string(*p)).collect::<Vec<String>>().connect(" | ");
+            .map(|p| pprust::pat_to_string(&**p)).collect::<Vec<String>>().connect(" | ");
 
         // ...and add the guard, if it exists.
         match *self.ref1() {
