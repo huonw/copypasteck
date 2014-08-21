@@ -300,8 +300,8 @@ impl<'a> Visitor<E> for StrictVersionHashVisitor<'a> {
         SawLifetimeRef(content(l.name)).hash(self.st);
     }
 
-    fn visit_lifetime_decl(&mut self, l: &Lifetime, _: E) {
-        SawLifetimeDecl(content(l.name)).hash(self.st);
+    fn visit_lifetime_decl(&mut self, l: &LifetimeDef, _: E) {
+        SawLifetimeDecl(content(l.lifetime.name)).hash(self.st);
     }
 
     // We do recursively walk the bodies of functions/methods
@@ -370,8 +370,8 @@ impl<'a> Visitor<E> for StrictVersionHashVisitor<'a> {
         SawTyMethod.hash(self.st); visit::walk_ty_method(self, t, e)
     }
 
-    fn visit_trait_method(&mut self, t: &TraitMethod, e: E) {
-        SawTraitMethod.hash(self.st); visit::walk_trait_method(self, t, e)
+    fn visit_trait_item(&mut self, t: &TraitItem, e: E) {
+        SawTraitMethod.hash(self.st); visit::walk_trait_item(self, t, e)
     }
 
     fn visit_struct_field(&mut self, s: &StructField, e: E) {
