@@ -147,7 +147,6 @@ pub enum SawExprComponent<'a> {
 
 fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
     match *node {
-        ExprVstore(..)           => SawExprVstore,
         ExprBox(..)              => SawExprBox,
         ExprVec(..)              => SawExprVec,
         ExprCall(..)             => SawExprCall,
