@@ -184,10 +184,10 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
         {
             let mut visit = hasher::make(&mut state);
             for p in self.ref0().iter() {
-                visit::walk_pat(&mut visit, &**p, ())
+                visit::walk_pat(&mut visit, &**p)
             }
             match *self.ref1() {
-                Some(e) => visit::walk_expr(&mut visit, &*e, ()),
+                Some(e) => visit::walk_expr(&mut visit, &*e),
                 None => {}
             }
         }
