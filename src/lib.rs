@@ -1,13 +1,13 @@
-#![feature(plugin_registrar, phase, globs)]
+#![feature(plugin_registrar, phase, globs, tuple_indexing)]
 
 #[phase(plugin, link)] extern crate rustc;
 extern crate syntax;
 
 use std::cmp;
-use std::gc::Gc;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 
 use syntax::ast;
+use syntax::ptr::P;
 use syntax::codemap::{BytePos, Span};
 use syntax::print::pprust;
 
@@ -43,14 +43,14 @@ impl LintPass for CopyPaste {
 
     fn check_expr(&mut self, cx: &Context, e: &ast::Expr) {
         match e.node {
-            ast::ExprIf(ref cond, ref block, trailing @ Some(_)) => {
+            ast::ExprIf(ref cond, ref block, ref trailing @ Some(_)) => {
                 if !self.checked_ifs.contains(&e.id) {
                     check_if(cx,
                              &mut self.checked_ifs,
-                             *cond, *block, trailing)
+                             &**cond, &**block, trailing)
                 }
             }
-            ast::ExprMatch(_, ref arms) => check_match(cx, arms.as_slice()),
+            ast::ExprMatch(_, ref arms, _) => check_match(cx, arms.as_slice()),
             _ => {}
         }
     }
@@ -77,13 +77,16 @@ fn check_and_insert<T: SourceObject>(cx: &Context, seen: &mut Map<T>, val: T,
                                      this_name: &str, other_name: &str) {
     // double hashing... whatever: it's better than stringification
     // and linear search (probably... I haven't measured).
-    let v = seen.find_or_insert(val.ast_hash(), vec![]);
+    let v = match seen.entry(val.ast_hash()) {
+        hash_map::Occupied(o) => o.into_mut(),
+        hash_map::Vacant(v) => v.set(vec![]),
+    };
 
     // lazily render to string, to save the stringification effort in
     // the common case of differing objects and hashes.
     let s = if v.is_empty() { None } else { Some(val.string()) };
 
-    for &(ref mut other_s, ref other_val) in v.mut_iter() {
+    for &(ref mut other_s, ref other_val) in v.iter_mut() {
         // the other thing doesn't have its string representation
         // computed, so do it now.
         if other_s.is_none() {
@@ -102,11 +105,11 @@ fn check_and_insert<T: SourceObject>(cx: &Context, seen: &mut Map<T>, val: T,
     v.push((s, val));
 }
 
-fn check_if(cx: &Context,
+fn check_if<'a>(cx: &Context,
             checked: &mut NodeSet,
-            mut cond: Gc<ast::Expr>,
-            mut body: Gc<ast::Block>,
-            mut next: Option<Gc<ast::Expr>>) {
+            mut cond: &'a ast::Expr,
+            mut body: &'a ast::Block,
+            mut next: &'a Option<P<ast::Expr>>) {
     let mut conds = HashMap::new();
     let mut bodies = HashMap::new();
 
@@ -116,19 +119,19 @@ fn check_if(cx: &Context,
         check_and_insert(cx, &mut conds, cond, "`if` condition", "condition");
         check_and_insert(cx, &mut bodies, body, "`if` branch", "branch");
 
-        match next {
+        match *next {
             // if ... { ... } else { ... }
-            Some(e) => match e.node {
-                ast::ExprBlock(body) => {
-                    check_and_insert(cx, &mut bodies, body, "`else` branch", "branch");
+            Some(ref e) => match e.node {
+                ast::ExprBlock(ref body) => {
+                    check_and_insert(cx, &mut bodies, &**body, "`else` branch", "branch");
                 }
                 ast::ExprIf(ref next_cond, ref next_body, ref next_next) => {
                     // register that we're looking at this thing, so
                     // it's not checked again, later.
                     checked.insert(e.id);
-                    cond = *next_cond;
-                    body = *next_body;
-                    next = *next_next;
+                    cond = &**next_cond;
+                    body = &**next_body;
+                    next = next_next;
                     continue
                 }
                 _ => unreachable!()
@@ -145,9 +148,9 @@ fn check_match(cx: &Context,
     let mut conds = HashMap::new();
     let mut bodies = HashMap::new();
     for arm in arms.iter() {
-        check_and_insert(cx, &mut conds, (arm.pats.as_slice(), arm.guard),
+        check_and_insert(cx, &mut conds, (arm.pats.as_slice(), &arm.guard),
                          "`match` pattern", "pattern");
-        check_and_insert(cx, &mut bodies, arm.body, "`match` arm", "arm");
+        check_and_insert(cx, &mut bodies, &arm.body, "`match` arm", "arm");
     }
 }
 
@@ -162,19 +165,29 @@ trait SourceObject {
     fn span(&self) -> Span;
 }
 
-impl SourceObject for Gc<ast::Block> {
-    fn ast_hash(&self) -> u64 { hasher::hash_block(&**self) }
-    fn string(&self) -> String { pprust::block_to_string(&**self) }
+impl SourceObject for ast::Block {
+    fn ast_hash(&self) -> u64 { hasher::hash_block(self) }
+    fn string(&self) -> String { pprust::block_to_string(self) }
     fn span(&self) -> Span { self.span }
 }
-impl SourceObject for Gc<ast::Expr> {
-    fn ast_hash(&self) -> u64 { hasher::hash_expr(&**self) }
-    fn string(&self) -> String { pprust::expr_to_string(&**self) }
+impl SourceObject for ast::Expr {
+    fn ast_hash(&self) -> u64 { hasher::hash_expr(self) }
+    fn string(&self) -> String { pprust::expr_to_string(self) }
     fn span(&self) -> Span { self.span }
+}
+impl<'a, S: SourceObject> SourceObject for &'a S {
+    fn ast_hash(&self) -> u64 { SourceObject::ast_hash(*self) }
+    fn string(&self) -> String  { SourceObject::string(*self) }
+    fn span(&self) -> Span  { SourceObject::span(*self) }
+}
+impl<S: SourceObject> SourceObject for P<S> {
+    fn ast_hash(&self) -> u64 { SourceObject::ast_hash(&**self) }
+    fn string(&self) -> String  { SourceObject::string(&**self) }
+    fn span(&self) -> Span  { SourceObject::span(&**self) }
 }
 
 // the 'condition' part of a `match` arm: `<pat> | <pat> | <pat> [if <expr>]`
-impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
+impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
     fn ast_hash(&self) -> u64 {
         use std::hash::sip;
         use syntax::visit;
@@ -186,8 +199,8 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
             for p in self.ref0().iter() {
                 visit::walk_pat(&mut visit, &**p)
             }
-            match *self.ref1() {
-                Some(e) => visit::walk_expr(&mut visit, &*e),
+            match *self.1 {
+                Some(ref e) => visit::walk_expr(&mut visit, &**e),
                 None => {}
             }
         }
@@ -207,8 +220,8 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
             .min_max()
             .into_option()
             .expect("need at least one pattern");
-        let (low, high) = match *self.ref1() {
-            Some(e) => {
+        let (low, high) = match *self.1 {
+            Some(ref e) => {
                 let Span { lo: BytePos(x), hi: BytePos(y), .. } = e.span;
                 (cmp::min(x, low), cmp::max(y, high))
             }
@@ -221,7 +234,7 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
             // again, probably not correct with macro expansion
             // (different patterns could come from different places),
             // but it's easy and works for the common case.
-            expn_info: self.ref0()[0].span.expn_info
+            expn_id: self.ref0()[0].span.expn_id
         }
     }
     fn string(&self) -> String {
@@ -231,8 +244,8 @@ impl<'a> SourceObject for (&'a [Gc<ast::Pat>], Option<Gc<ast::Expr>>) {
             .map(|p| pprust::pat_to_string(&**p)).collect::<Vec<String>>().connect(" | ");
 
         // ...and add the guard, if it exists.
-        match *self.ref1() {
-            Some(e) => {
+        match *self.1 {
+            Some(ref e) => {
                 s.push_str(" if ");
                 s.push_str(e.string().as_slice())
             }

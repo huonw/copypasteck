@@ -117,7 +117,6 @@ pub enum SawExprComponent<'a> {
     SawExprBreak(Option<token::InternedString>),
     SawExprAgain(Option<token::InternedString>),
 
-    SawExprVstore,
     SawExprBox,
     SawExprVec,
     SawExprCall,
@@ -137,6 +136,7 @@ pub enum SawExprComponent<'a> {
     SawExprAssign,
     SawExprAssignOp(ast::BinOp),
     SawExprIndex,
+    SawExprSlice,
     SawExprPath,
     SawExprAddrOf(ast::Mutability),
     SawExprRet,
@@ -144,6 +144,7 @@ pub enum SawExprComponent<'a> {
     SawExprStruct,
     SawExprRepeat,
     SawExprParen,
+    SawExprForLoop,
 }
 
 fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
@@ -155,7 +156,7 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
         ExprTup(..)              => SawExprTup,
         ExprBinary(op, _, _)     => SawExprBinary(op),
         ExprUnary(op, _)         => SawExprUnary(op),
-        ExprLit(lit)             => SawExprLit(lit.node.clone()),
+        ExprLit(ref lit)         => SawExprLit(lit.node.clone()),
         ExprCast(..)             => SawExprCast,
         ExprIf(..)               => SawExprIf,
         ExprWhile(..)            => SawExprWhile,
@@ -170,6 +171,7 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
         ExprField(_, id, _)      => SawExprField(content(id.node)),
         ExprTupField(_, id, _)   => SawExprTupField(id.node),
         ExprIndex(..)            => SawExprIndex,
+        ExprSlice(..)            => SawExprSlice,
         ExprPath(..)             => SawExprPath,
         ExprAddrOf(m, _)         => SawExprAddrOf(m),
         ExprBreak(id)            => SawExprBreak(id.map(content)),
@@ -179,9 +181,11 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
         ExprStruct(..)           => SawExprStruct,
         ExprRepeat(..)           => SawExprRepeat,
         ExprParen(..)            => SawExprParen,
+        ExprForLoop(..)          => SawExprForLoop,
 
         // just syntactic artifacts, expanded away by time of SVH.
-        ExprForLoop(..)          => unreachable!(),
+        ExprIfLet(..)            => unreachable!(),
+        ExprWhileLet(..)         => unreachable!(),
         ExprMac(..)              => unreachable!(),
     }
 }
@@ -213,10 +217,7 @@ impl InternKey for Name {
 }
 fn content<K:InternKey>(k: K) -> token::InternedString { k.get_content() }
 
-// local short-hand eases writing signatures of syntax::visit mod.
-type E = ();
-
-impl<'a, 'b> Visitor<'b> for StrictVersionHashVisitor<'a> {
+impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
 
     fn visit_mac(&mut self, macro: &Mac) {
         // macro invocations, namely macro_rules definitions,
@@ -237,7 +238,7 @@ impl<'a, 'b> Visitor<'b> for StrictVersionHashVisitor<'a> {
         } else {
             // It is not possible to observe any kind of macro
             // invocation at this stage except `macro_rules!`.
-            fail!("reached macro somehow: {}",
+            panic!("reached macro somehow: {}",
                   pprust::to_string(|pp_state| pp_state.print_mac(macro)));
         }
 
@@ -363,7 +364,8 @@ impl<'a, 'b> Visitor<'b> for StrictVersionHashVisitor<'a> {
         SawGenerics.hash(self.st); visit::walk_generics(self, g)
     }
 
-    fn visit_fn(&mut self, fk: FnKind, fd: &FnDecl, b: &Block, s: Span, _: NodeId) {
+    fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl,
+                b: &'v Block, s: Span, _: NodeId) {
         SawFn.hash(self.st); visit::walk_fn(self, fk, fd, b, s)
     }
 
