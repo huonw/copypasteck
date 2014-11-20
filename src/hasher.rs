@@ -11,6 +11,10 @@ use syntax::visit::{Visitor, FnKind};
 use std::hash::Hash;
 use std::hash::sip::SipState;
 
+use self::SawAbiComponent::*;
+use self::SawExprComponent::*;
+use self::SawStmtComponent::*;
+
 pub fn hash_expr(e: &ast::Expr) -> u64 {
     // FIXME: this should use SHA1, not SipHash. SipHash is not built to
     //        avoid collisions.
