@@ -73,7 +73,7 @@ enum SawAbiComponent<'a> {
     SawStructDef(token::InternedString),
 
     SawLifetimeRef(token::InternedString),
-    SawLifetimeDecl(token::InternedString),
+    SawLifetimeDef(token::InternedString),
 
     SawMod,
     SawViewItem,
@@ -133,13 +133,12 @@ pub enum SawExprComponent<'a> {
     SawExprIf,
     SawExprWhile,
     SawExprMatch,
-    SawExprFnBlock,
-    SawExprUnboxedFn,
-    SawExprProc,
+    SawExprClosure,
     SawExprBlock,
     SawExprAssign,
     SawExprAssignOp(ast::BinOp),
     SawExprIndex,
+    SawExprRange,
     SawExprSlice,
     SawExprPath,
     SawExprAddrOf(ast::Mutability),
@@ -166,15 +165,14 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
         ExprWhile(..)            => SawExprWhile,
         ExprLoop(_, id)          => SawExprLoop(id.map(content)),
         ExprMatch(..)            => SawExprMatch,
-        ExprFnBlock(..)          => SawExprFnBlock,
-        ExprUnboxedFn(..)        => SawExprUnboxedFn,
-        ExprProc(..)             => SawExprProc,
+        ExprClosure(..)          => SawExprClosure,
         ExprBlock(..)            => SawExprBlock,
         ExprAssign(..)           => SawExprAssign,
         ExprAssignOp(op, _, _)   => SawExprAssignOp(op),
-        ExprField(_, id, _)      => SawExprField(content(id.node)),
-        ExprTupField(_, id, _)   => SawExprTupField(id.node),
+        ExprField(_, id)         => SawExprField(content(id.node)),
+        ExprTupField(_, id)      => SawExprTupField(id.node),
         ExprIndex(..)            => SawExprIndex,
+        ExprRange(..)            => SawExprRange,
         ExprSlice(..)            => SawExprSlice,
         ExprPath(..)             => SawExprPath,
         ExprAddrOf(m, _)         => SawExprAddrOf(m),
@@ -237,13 +235,13 @@ impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
             // trees might be faster. Implementing this is far
             // easier in short term.
             let macro_defn_as_string =
-                pprust::to_string(|pp_state| pp_state.print_mac(macro));
+                pprust::to_string(|pp_state| pp_state.print_mac(macro, token::Paren));
             macro_defn_as_string.hash(self.st);
         } else {
             // It is not possible to observe any kind of macro
             // invocation at this stage except `macro_rules!`.
             panic!("reached macro somehow: {}",
-                  pprust::to_string(|pp_state| pp_state.print_mac(macro)));
+                  pprust::to_string(|pp_state| pp_state.print_mac(macro, token::Paren)));
         }
 
         visit::walk_mac(self, macro);
@@ -306,8 +304,8 @@ impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
         SawLifetimeRef(content(l.name)).hash(self.st);
     }
 
-    fn visit_lifetime_decl(&mut self, l: &LifetimeDef) {
-        SawLifetimeDecl(content(l.lifetime.name)).hash(self.st);
+    fn visit_lifetime_def(&mut self, l: &LifetimeDef) {
+        SawLifetimeDef(content(l.lifetime.name)).hash(self.st);
     }
 
     // We do recursively walk the bodies of functions/methods

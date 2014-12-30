@@ -1,4 +1,4 @@
-#![feature(plugin_registrar, phase, globs, tuple_indexing)]
+#![feature(plugin_registrar, phase, globs)]
 
 #[phase(plugin, link)] extern crate rustc;
 extern crate syntax;
@@ -78,8 +78,8 @@ fn check_and_insert<T: SourceObject>(cx: &Context, seen: &mut Map<T>, val: T,
     // double hashing... whatever: it's better than stringification
     // and linear search (probably... I haven't measured).
     let v = match seen.entry(val.ast_hash()) {
-        hash_map::Occupied(o) => o.into_mut(),
-        hash_map::Vacant(v) => v.set(vec![]),
+        hash_map::Entry::Occupied(o) => o.into_mut(),
+        hash_map::Entry::Vacant(v) => v.set(vec![]),
     };
 
     // lazily render to string, to save the stringification effort in
@@ -196,7 +196,7 @@ impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
         let mut state = sip::SipState::new();
         {
             let mut visit = hasher::make(&mut state);
-            for p in self.ref0().iter() {
+            for p in self.0.iter() {
                 visit::walk_pat(&mut visit, &**p)
             }
             match *self.1 {
@@ -215,7 +215,7 @@ impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
         // but will likely fail horribly with patterns/guards
         // substituted in via macros (especially if the macro if from
         // a different file... :( ).
-        let (low, high) = self.ref0().iter()
+        let (low, high) = self.0.iter()
             .map(|p| { let BytePos(x) = p.span.lo; x })
             .min_max()
             .into_option()
@@ -234,12 +234,12 @@ impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
             // again, probably not correct with macro expansion
             // (different patterns could come from different places),
             // but it's easy and works for the common case.
-            expn_id: self.ref0()[0].span.expn_id
+            expn_id: self.0[0].span.expn_id
         }
     }
     fn string(&self) -> String {
         // Put all the patterns together with a `|`...
-        let mut s = self.ref0()
+        let mut s = self.0
             .iter()
             .map(|p| pprust::pat_to_string(&**p)).collect::<Vec<String>>().connect(" | ");
 
