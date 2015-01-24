@@ -1,6 +1,8 @@
-#![feature(plugin_registrar, phase, globs)]
+#![feature(plugin_registrar)]
 
-#[phase(plugin, link)] extern crate rustc;
+#![allow(unstable)]
+
+#[macro_use] extern crate rustc;
 extern crate syntax;
 
 use std::cmp;
@@ -20,7 +22,7 @@ mod hasher;
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
-    reg.register_lint_pass(box CopyPaste { checked_ifs: NodeSet::new() });
+    reg.register_lint_pass(Box::new(CopyPaste { checked_ifs: NodeSet() }));
 }
 
 
@@ -79,14 +81,14 @@ fn check_and_insert<T: SourceObject>(cx: &Context, seen: &mut Map<T>, val: T,
     // and linear search (probably... I haven't measured).
     let v = match seen.entry(val.ast_hash()) {
         hash_map::Entry::Occupied(o) => o.into_mut(),
-        hash_map::Entry::Vacant(v) => v.set(vec![]),
+        hash_map::Entry::Vacant(v) => v.insert(vec![]),
     };
 
     // lazily render to string, to save the stringification effort in
     // the common case of differing objects and hashes.
     let s = if v.is_empty() { None } else { Some(val.string()) };
 
-    for &(ref mut other_s, ref other_val) in v.iter_mut() {
+    for &mut (ref mut other_s, ref other_val) in v.iter_mut() {
         // the other thing doesn't have its string representation
         // computed, so do it now.
         if other_s.is_none() {
@@ -189,11 +191,11 @@ impl<S: SourceObject> SourceObject for P<S> {
 // the 'condition' part of a `match` arm: `<pat> | <pat> | <pat> [if <expr>]`
 impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
     fn ast_hash(&self) -> u64 {
-        use std::hash::sip;
+        use std::hash::{self, Hasher};
         use syntax::visit;
 
         // hash everything together into one pot.
-        let mut state = sip::SipState::new();
+        let mut state = hash::SipHasher::new();
         {
             let mut visit = hasher::make(&mut state);
             for p in self.0.iter() {
@@ -204,7 +206,7 @@ impl<'a> SourceObject for (&'a [P<ast::Pat>], &'a Option<P<ast::Expr>>) {
                 None => {}
             }
         }
-        state.result()
+        state.finish()
     }
     fn span(&self) -> Span {
         // get the smallest/largest byte position of the components of

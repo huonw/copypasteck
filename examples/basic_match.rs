@@ -1,13 +1,13 @@
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)] extern crate copypasteck;
+#[plugin] #[no_link] extern crate copypasteck;
 
 fn main() {
-    match 10i {
+    match 10 {
         1 => { () }
         2 => { () }
-        _ if true => { 1i; }
-        _ if true => { 1i; }
+        _ if true => { 1; }
+        _ if true => { 1; }
         _ => { {} }
     }
 }

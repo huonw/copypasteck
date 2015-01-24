@@ -1,11 +1,11 @@
-#![feature(phase)]
+#![feature(plugin)]
 
-#[phase(plugin)] extern crate copypasteck;
+#[plugin] #[no_link] extern crate copypasteck;
 
 fn main() {
-    let a = 16i;
+    let a = 16;
     let _b = if a > 15 {
-        2u
+        2
     } else if a > 10 {
         3
     } else if a > 10 {

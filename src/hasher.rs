@@ -8,8 +8,7 @@ use syntax::print::pprust;
 use syntax::visit;
 use syntax::visit::{Visitor, FnKind};
 
-use std::hash::Hash;
-use std::hash::sip::SipState;
+use std::hash::{Hash, SipHasher, Hasher};
 
 use self::SawAbiComponent::*;
 use self::SawExprComponent::*;
@@ -18,29 +17,29 @@ use self::SawStmtComponent::*;
 pub fn hash_expr(e: &ast::Expr) -> u64 {
     // FIXME: this should use SHA1, not SipHash. SipHash is not built to
     //        avoid collisions.
-    let mut state = SipState::new();
+    let mut state = SipHasher::new();
     {
         let mut visit = make(&mut state);
         visit::walk_expr(&mut visit, e);
     }
-    state.result()
+    state.finish()
 }
 pub fn hash_block(b: &ast::Block) -> u64 {
     // FIXME: this should use SHA1, not SipHash. SipHash is not built to
     //        avoid collisions.
-    let mut state = SipState::new();
+    let mut state = SipHasher::new();
     {
         let mut visit = make(&mut state);
         visit::walk_block(&mut visit, b);
     }
-    state.result()
+    state.finish()
 }
 
 pub struct StrictVersionHashVisitor<'a> {
-    pub st: &'a mut SipState,
+    pub st: &'a mut SipHasher,
 }
 
-pub fn make<'a>(st: &'a mut SipState) -> StrictVersionHashVisitor<'a> {
+pub fn make<'a>(st: &'a mut SipHasher) -> StrictVersionHashVisitor<'a> {
     StrictVersionHashVisitor { st: st }
 }
 
@@ -64,7 +63,7 @@ pub fn make<'a>(st: &'a mut SipState) -> StrictVersionHashVisitor<'a> {
 // This enum represents the different potential bits of code the
 // visitor could encounter that could affect the ABI for the crate,
 // and assigns each a distinct tag to feed into the hash computation.
-#[deriving(Hash)]
+#[derive(Hash)]
 enum SawAbiComponent<'a> {
 
     // FIXME (#14132): should we include (some function of)
@@ -76,7 +75,6 @@ enum SawAbiComponent<'a> {
     SawLifetimeDef(token::InternedString),
 
     SawMod,
-    SawViewItem,
     SawForeignItem,
     SawItem,
     SawDecl,
@@ -112,12 +110,12 @@ enum SawAbiComponent<'a> {
 /// because the SVH is just a developer convenience; there is no
 /// guarantee of collision-freedom, hash collisions are just
 /// (hopefully) unlikely.)
-#[deriving(Hash)]
+#[derive(Hash)]
 pub enum SawExprComponent<'a> {
 
     SawExprLoop(Option<token::InternedString>),
     SawExprField(token::InternedString),
-    SawExprTupField(uint),
+    SawExprTupField(usize),
     SawExprBreak(Option<token::InternedString>),
     SawExprAgain(Option<token::InternedString>),
 
@@ -140,6 +138,7 @@ pub enum SawExprComponent<'a> {
     SawExprIndex,
     SawExprRange,
     SawExprPath,
+    SawExprQPath,
     SawExprAddrOf(ast::Mutability),
     SawExprRet,
     SawExprInlineAsm(&'a ast::InlineAsm),
@@ -174,6 +173,7 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
         ExprRange(..)            => SawExprRange,
         ExprPath(..)             => SawExprPath,
         ExprAddrOf(m, _)         => SawExprAddrOf(m),
+        ExprQPath(..)            => SawExprQPath,
         ExprBreak(id)            => SawExprBreak(id.map(content)),
         ExprAgain(id)            => SawExprAgain(id.map(content)),
         ExprRet(..)              => SawExprRet,
@@ -191,7 +191,7 @@ fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
 }
 
 /// SawStmtComponent is analogous to SawExprComponent, but for statements.
-#[deriving(Hash)]
+#[derive(Hash)]
 pub enum SawStmtComponent {
     SawStmtDecl,
     SawStmtExpr,
@@ -219,11 +219,11 @@ fn content<K:InternKey>(k: K) -> token::InternedString { k.get_content() }
 
 impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
 
-    fn visit_mac(&mut self, macro: &Mac) {
+    fn visit_mac(&mut self, mac: &Mac) {
         // macro invocations, namely macro_rules definitions,
         // *can* appear as items, even in the expanded crate AST.
 
-        if macro_name(macro).get() == "macro_rules" {
+        if macro_name(mac).get() == "macro_rules" {
             // Pretty-printing definition to a string strips out
             // surface artifacts (currently), such as the span
             // information, yielding a content-based hash.
@@ -233,19 +233,19 @@ impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
             // trees might be faster. Implementing this is far
             // easier in short term.
             let macro_defn_as_string =
-                pprust::to_string(|pp_state| pp_state.print_mac(macro, token::Paren));
+                pprust::to_string(|pp_state| pp_state.print_mac(mac, token::Paren));
             macro_defn_as_string.hash(self.st);
         } else {
             // It is not possible to observe any kind of macro
             // invocation at this stage except `macro_rules!`.
             panic!("reached macro somehow: {}",
-                  pprust::to_string(|pp_state| pp_state.print_mac(macro, token::Paren)));
+                  pprust::to_string(|pp_state| pp_state.print_mac(mac, token::Paren)));
         }
 
-        visit::walk_mac(self, macro);
+        visit::walk_mac(self, mac);
 
-        fn macro_name(macro: &Mac) -> token::InternedString {
-            match &macro.node {
+        fn macro_name(mac: &Mac) -> token::InternedString {
+            match &mac.node {
                 &MacInvocTT(ref path, ref _tts, ref _stx_ctxt) => {
                     let s = path.segments.as_slice();
                     assert_eq!(s.len(), 1);
@@ -317,19 +317,6 @@ impl<'a, 'v> Visitor<'v> for StrictVersionHashVisitor<'a> {
 
     fn visit_stmt(&mut self, s: &Stmt) {
         SawStmt(saw_stmt(&s.node)).hash(self.st); visit::walk_stmt(self, s)
-    }
-
-    fn visit_view_item(&mut self, i: &ViewItem) {
-        // Two kinds of view items can affect the ABI for a crate:
-        // exported `pub use` view items (since that may expose
-        // items that downstream crates can call), and `use
-        // foo::Trait`, since changing that may affect method
-        // resolution.
-        //
-        // The simplest approach to handling both of the above is
-        // just to adopt the same simple-minded (fine-grained)
-        // hash that I am deploying elsewhere here.
-        SawViewItem.hash(self.st); visit::walk_view_item(self, i)
     }
 
     fn visit_foreign_item(&mut self, i: &ForeignItem) {
